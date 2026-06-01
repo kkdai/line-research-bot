@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, call
 import pytest
 from google.cloud import firestore
 
-from app.agents_client import AgentResponse, EnvironmentNotFoundError
+from app.agents_client import AgentResponse, EnvironmentNotFoundError, AgentsAPIError
 from app.state import StateStore
 from app.worker import ResearchWorker, JobPayload
 
@@ -147,3 +147,35 @@ def test_retry_write_uses_existing_sources(worker: "ResearchWorker") -> None:
     assert "WRITE_REPORT" in inst
     user = worker._store.get_user("U1")
     assert user.pending_action is None
+
+
+def test_search_compare_retries_once_then_succeeds(worker: "ResearchWorker") -> None:
+    worker._agents.interact.side_effect = [
+        _ok(json.dumps({"topic": "x", "queries": [], "source_count": 0}), "i1"),
+        AgentsAPIError("transient"),
+        _ok(json.dumps({"sources": [], "source_count": 0, "disagreement_count": 0,
+                        "agreements": [], "disagreements": [], "gaps": []}), "i2-retry"),
+        _ok(json.dumps({"report_id": "r1", "summary_500": "s",
+                        "top_citations": [], "new_version": 1}), "i3"),
+    ]
+    job = JobPayload(line_user_id="U1", topic="t", mode="new",
+                     report_id=None, task_id="t1")
+    worker.run(job)
+    assert worker._agents.interact.call_count == 4
+
+
+def test_write_report_fails_twice_sets_pending_action(worker: "ResearchWorker") -> None:
+    worker._agents.interact.side_effect = [
+        _ok(json.dumps({"topic": "x", "queries": [], "source_count": 0}), "i1"),
+        _ok(json.dumps({"sources": [], "source_count": 0, "disagreement_count": 0,
+                        "agreements": [], "disagreements": [], "gaps": []}), "i2"),
+        AgentsAPIError("fail-1"),
+        AgentsAPIError("fail-2"),
+    ]
+    job = JobPayload(line_user_id="U1", topic="t", mode="new",
+                     report_id=None, task_id="t1")
+    worker.run(job)
+    user = worker._store.get_user("U1")
+    assert user.pending_action == "retry_write"
+    push_msgs = [c.kwargs.get("text", "") for c in worker._line.push_text.call_args_list]
+    assert any("再試一次" in m for m in push_msgs)

@@ -3,7 +3,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from app.agents_client import AgentsClient, AgentResponse, EnvironmentNotFoundError
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+
+from app.agents_client import AgentsClient, AgentResponse, EnvironmentNotFoundError, AgentsAPIError
 from app.flex import build_progress_text, build_report_card
 from app.line_client import LineClient
 from app.state import StateStore
@@ -74,12 +76,16 @@ class ResearchWorker:
     # ---------------- new research ----------------
 
     def _run_new(self, user_id: str, env_id: str, topic: str) -> None:
-        # Stage 1: PLAN
-        plan_resp = self._agents.interact(
-            environment_id=env_id,
-            instruction=f"PLAN\n\ntopic: {topic}",
-            previous_interaction_id=None,
-        )
+        # Stage 1: PLAN (1 attempt only; surface failure immediately)
+        try:
+            plan_resp = self._agents.interact(
+                environment_id=env_id,
+                instruction=f"PLAN\n\ntopic: {topic}",
+                previous_interaction_id=None,
+            )
+        except AgentsAPIError:
+            self._line.push_text(user_id=user_id, text="規劃失敗，請換個說法重試。")
+            return
         plan_json = json.loads(plan_resp.text)
         self._store.set_last_interaction(user_id, plan_resp.interaction_id)
         self._line.push_text(
@@ -87,12 +93,17 @@ class ResearchWorker:
             text=build_progress_text("plan_done", source_count=plan_json["source_count"]),
         )
 
-        # Stage 2: SEARCH_COMPARE
-        search_resp = self._agents.interact(
-            environment_id=env_id,
-            instruction="SEARCH_COMPARE",
-            previous_interaction_id=plan_resp.interaction_id,
-        )
+        # Stage 2: SEARCH_COMPARE (2 attempts max)
+        try:
+            search_resp = self._interact_with_retry(
+                max_attempts=2,
+                environment_id=env_id,
+                instruction="SEARCH_COMPARE",
+                previous_interaction_id=plan_resp.interaction_id,
+            )
+        except AgentsAPIError:
+            self._line.push_text(user_id=user_id, text="搜尋比對失敗，請稍後再試。")
+            return
         search_json = json.loads(search_resp.text)
         self._store.set_last_interaction(user_id, search_resp.interaction_id)
         self._line.push_text(
@@ -104,17 +115,26 @@ class ResearchWorker:
             ),
         )
 
-        # Stage 3: WRITE_REPORT
+        # Stage 3: WRITE_REPORT (2 attempts max; on final failure set pending_action and push)
         report_id = uuid.uuid4().hex
-        write_resp = self._agents.interact(
-            environment_id=env_id,
-            instruction=(
-                "WRITE_REPORT\n\n"
-                f"report_id: {report_id}\n"
-                "mode: new"
-            ),
-            previous_interaction_id=search_resp.interaction_id,
-        )
+        try:
+            write_resp = self._interact_with_retry(
+                max_attempts=2,
+                environment_id=env_id,
+                instruction=(
+                    "WRITE_REPORT\n\n"
+                    f"report_id: {report_id}\n"
+                    "mode: new"
+                ),
+                previous_interaction_id=search_resp.interaction_id,
+            )
+        except AgentsAPIError:
+            self._store.set_pending_action(user_id, "retry_write")
+            self._line.push_text(
+                user_id=user_id,
+                text="資料已找齊，組稿失敗，回『再試一次』可再試。",
+            )
+            return
         write_json = json.loads(write_resp.text)
         self._store.set_last_interaction(user_id, write_resp.interaction_id)
 
@@ -137,6 +157,18 @@ class ResearchWorker:
             version=1,
         )
         self._line.push_flex(user_id=user_id, flex_message=card)
+
+    def _interact_with_retry(self, *, max_attempts: int, **kwargs) -> AgentResponse:
+        @retry(
+            stop=stop_after_attempt(max_attempts),
+            wait=wait_fixed(2),
+            retry=retry_if_exception_type(AgentsAPIError),
+            reraise=True,
+        )
+        def _call() -> AgentResponse:
+            return self._agents.interact(**kwargs)
+
+        return _call()
 
     def _public_url(self, report_id: str) -> str:
         return f"https://storage.googleapis.com/{self._bucket}/{report_id}/index.html"
