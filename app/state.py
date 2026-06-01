@@ -158,12 +158,14 @@ class StateStore:
 
     def create_report(
         self,
+        *,
         user_id: str,
         topic: str,
         summary: str,
         gcs_url: str,
+        report_id: str | None = None,
     ) -> ReportRecord:
-        report_id = uuid.uuid4().hex
+        report_id = report_id or uuid.uuid4().hex
         now = _now()
         doc = {
             "user_id": user_id,
