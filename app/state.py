@@ -66,27 +66,38 @@ class StateStore:
         line_user_id: str,
         environment_factory: Callable[[], str],
     ) -> UserRecord:
-        existing = self.get_user(line_user_id)
-        if existing:
-            return existing
-        env_id = environment_factory()
-        doc = {
-            "environment_id": env_id,
-            "current_report_id": None,
-            "last_interaction_id": None,
-            "last_active_at": _now(),
-            "lock": None,
-            "pending_action": None,
-        }
-        self._db.collection("users").document(line_user_id).set(doc)
+        ref = self._db.collection("users").document(line_user_id)
+
+        # NOTE: If the transaction retries due to contention, environment_factory()
+        # may be called more than once. This is acceptable for our demo: it only
+        # happens on a user's very first message and contention there is rare.
+        @firestore.transactional
+        def _txn(txn: firestore.Transaction) -> tuple[bool, dict]:
+            """Returns (created, doc_data)."""
+            snap = ref.get(transaction=txn)
+            if snap.exists:
+                return False, (snap.to_dict() or {})
+            env_id = environment_factory()
+            doc = {
+                "environment_id": env_id,
+                "current_report_id": None,
+                "last_interaction_id": None,
+                "last_active_at": _now(),
+                "lock": None,
+                "pending_action": None,
+            }
+            txn.set(ref, doc)
+            return True, doc
+
+        _, d = _txn(self._db.transaction())
         return UserRecord(
             line_user_id=line_user_id,
-            environment_id=env_id,
-            current_report_id=None,
-            last_interaction_id=None,
-            last_active_at=doc["last_active_at"],
-            lock=None,
-            pending_action=None,
+            environment_id=d["environment_id"],
+            current_report_id=d.get("current_report_id"),
+            last_interaction_id=d.get("last_interaction_id"),
+            last_active_at=d.get("last_active_at", _now()),
+            lock=d.get("lock"),
+            pending_action=d.get("pending_action"),
         )
 
     def set_environment(self, line_user_id: str, environment_id: str) -> None:
