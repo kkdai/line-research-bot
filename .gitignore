@@ -11,3 +11,6 @@ build/
 *.egg-info/
 .coverage
 htmlcov/
+firebase-debug.log
+firestore-debug.log
+.firebaserc
