@@ -138,6 +138,21 @@ class ResearchWorker:
         write_json = json.loads(write_resp.text)
         self._store.set_last_interaction(user_id, write_resp.interaction_id)
 
+        if write_json.get("error") == "publish_failed":
+            # Sandbox has report.html but couldn't upload. Seed state so user can retry.
+            gcs_url = self._public_url(report_id)
+            self._store.create_report(
+                user_id=user_id, topic=topic,
+                summary="(尚未發佈成功)", gcs_url=gcs_url, report_id=report_id,
+            )
+            self._store.set_current_report(user_id, report_id)
+            self._store.set_pending_action(user_id, "retry_publish")
+            self._line.push_text(
+                user_id=user_id,
+                text="報告寫好但發佈失敗，回『再發佈一次』可再試。",
+            )
+            return
+
         gcs_url = self._public_url(report_id)
         report = self._store.create_report(
             user_id=user_id,

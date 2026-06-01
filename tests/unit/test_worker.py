@@ -181,6 +181,24 @@ def test_write_report_fails_twice_sets_pending_action(worker: "ResearchWorker") 
     assert any("再試一次" in m for m in push_msgs)
 
 
+def test_write_report_publish_failed_sets_pending_action(worker: "ResearchWorker") -> None:
+    worker._agents.interact.side_effect = [
+        _ok(json.dumps({"topic": "x", "queries": [], "source_count": 0}), "i1"),
+        _ok(json.dumps({"sources": [], "source_count": 0, "disagreement_count": 0,
+                        "agreements": [], "disagreements": [], "gaps": []}), "i2"),
+        _ok(json.dumps({"error": "publish_failed"}), "i3"),
+    ]
+    job = JobPayload(line_user_id="U1", topic="t", mode="new",
+                     report_id=None, task_id="t1")
+    worker.run(job)
+    user = worker._store.get_user("U1")
+    assert user.pending_action == "retry_publish"
+    push_msgs = [c.kwargs.get("text", "") for c in worker._line.push_text.call_args_list]
+    assert any("再發佈一次" in m for m in push_msgs)
+    # Report should be created so retry_publish can find it
+    assert user.current_report_id is not None
+
+
 def test_run_research_endpoint_releases_lock(firestore_client) -> None:
     """End-to-end of /tasks/run-research: lock acquired by webhook is released here."""
     from fastapi import FastAPI, Request

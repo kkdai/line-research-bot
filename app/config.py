@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     gcs_bucket: str = Field(...)
     cloud_tasks_queue: str = Field(...)
     cloud_tasks_location: str = Field(...)
-    cloud_run_service_url: str = Field(...)
+    cloud_run_service_url: str = Field(default="")
     line_channel_secret: str = Field(...)
     line_channel_access_token: str = Field(...)
     use_firestore_emulator: bool = Field(default=False)

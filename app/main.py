@@ -1,4 +1,5 @@
 import os
+import sys
 from fastapi import FastAPI, Request
 
 import google.auth
@@ -53,11 +54,22 @@ def create_app() -> FastAPI:
         "SERVICE_ACCOUNT_EMAIL",
         f"{s.gcp_project_id}-compute@developer.gserviceaccount.com",
     )
+    if not s.cloud_run_service_url:
+        print(
+            "WARNING: CLOUD_RUN_SERVICE_URL is not set; using placeholder URL. "
+            "Re-deploy after the first deploy to set the real URL.",
+            file=sys.stderr,
+        )
+    _tasks_target_url = (
+        f"{s.cloud_run_service_url}/tasks/run-research"
+        if s.cloud_run_service_url
+        else "http://placeholder/tasks/run-research"
+    )
     tasks = TasksDispatcher(
         project_id=s.gcp_project_id,
         location=s.cloud_tasks_location,
         queue=s.cloud_tasks_queue,
-        target_url=f"{s.cloud_run_service_url}/tasks/run-research",
+        target_url=_tasks_target_url,
         service_account_email=sa_email,
     )
     worker = ResearchWorker(

@@ -26,7 +26,7 @@ def test_settings_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_settings_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     for k in [
         "GCP_PROJECT_ID", "AGENT_ID", "GCS_BUCKET", "CLOUD_TASKS_QUEUE",
-        "CLOUD_TASKS_LOCATION", "CLOUD_RUN_SERVICE_URL",
+        "CLOUD_TASKS_LOCATION",
         "LINE_CHANNEL_SECRET", "LINE_CHANNEL_ACCESS_TOKEN",
     ]:
         monkeypatch.delenv(k, raising=False)
