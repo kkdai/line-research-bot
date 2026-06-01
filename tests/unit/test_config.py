@@ -4,6 +4,7 @@ from app.config import Settings
 
 
 def test_settings_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("USE_FIRESTORE_EMULATOR", raising=False)
     monkeypatch.setenv("GCP_PROJECT_ID", "demo-proj")
     monkeypatch.setenv("AGENT_ID", "research-planner")
     monkeypatch.setenv("GCS_BUCKET", "line-reports")
