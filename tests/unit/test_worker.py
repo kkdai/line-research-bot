@@ -179,3 +179,44 @@ def test_write_report_fails_twice_sets_pending_action(worker: "ResearchWorker") 
     assert user.pending_action == "retry_write"
     push_msgs = [c.kwargs.get("text", "") for c in worker._line.push_text.call_args_list]
     assert any("再試一次" in m for m in push_msgs)
+
+
+def test_run_research_endpoint_releases_lock(firestore_client) -> None:
+    """End-to-end of /tasks/run-research: lock acquired by webhook is released here."""
+    from fastapi import FastAPI, Request
+    from fastapi.testclient import TestClient
+
+    store = StateStore(firestore_client)
+    store.get_or_create_user("U1", environment_factory=lambda: "env-A")
+    store.acquire_lock("U1", task_id="t1", ttl_seconds=300)
+
+    agents = MagicMock()
+    agents.interact.side_effect = [
+        _ok(json.dumps({"topic": "x", "queries": [], "source_count": 0}), "i1"),
+        _ok(json.dumps({"sources": [], "source_count": 0, "disagreement_count": 0,
+                        "agreements": [], "disagreements": [], "gaps": []}), "i2"),
+        _ok(json.dumps({"report_id": "r1", "summary_500": "s",
+                        "top_citations": [], "new_version": 1}), "i3"),
+    ]
+    worker = ResearchWorker(store=store, agents=agents, line=MagicMock(),
+                            gcs_bucket="line-reports")
+    app = FastAPI()
+
+    @app.post("/tasks/run-research")
+    async def run(req: Request) -> dict:
+        data = await req.json()
+        job = JobPayload(**{k: data[k] for k in ["line_user_id", "topic", "mode",
+                                                  "report_id", "task_id"]})
+        try:
+            worker.run(job)
+        finally:
+            store.release_lock(job.line_user_id)
+        return {"ok": True}
+
+    client = TestClient(app)
+    r = client.post("/tasks/run-research", json={
+        "line_user_id": "U1", "topic": "x", "mode": "new",
+        "report_id": None, "task_id": "t1",
+    })
+    assert r.status_code == 200
+    assert store.get_user("U1").lock is None
