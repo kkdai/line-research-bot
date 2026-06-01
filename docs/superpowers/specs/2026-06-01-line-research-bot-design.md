@@ -169,10 +169,17 @@ system_instruction: |
     把每個來源的摘要 + 跨來源一致/分歧點寫入 /workspace/sources.json。
   - WRITE_REPORT：讀 sources.json 寫 /workspace/report.md，
     code_execution 安裝 markdown 套件、轉成 report.html（含內嵌 CSS），
-    gsutil cp 到 gs://line-reports/{report_id}/index.html，
-    若是深化模式，先把舊 index.html 搬到 snapshots/v{N-1}.html。
-    最後回傳 JSON：{report_id, summary_500, top_citations[]}。
+    gsutil cp 到 gs://line-reports/{report_id}/index.html。
+    若請求中含 `previous_version: N`（深化模式），先用 `gsutil mv`
+    把目前 GCS 上的 index.html 搬到 snapshots/v{N}.html，再上傳新的 index.html。
+    所有上傳一律使用 `gsutil -h "Cache-Control:no-cache, max-age=0" cp ...`。
+    最後回傳 JSON：{report_id, summary_500, top_citations[], new_version}。
   輸出嚴格 JSON，不要多餘解說。
+
+Worker 在每次呼叫第 3 段時，會把以下 metadata 放進 input：
+- `mode`: "new" | "deepen"
+- `report_id`: 目前報告 ID
+- `previous_version`: 深化模式時的目前版本號 N（從 Firestore `reports/{report_id}.version` 取得；上傳完成後 worker 把 Firestore version 設為 N+1）
 ```
 
 每位 LINE 使用者擁有自己的 `environment_id`；三段呼叫透過 `previous_interaction_id` 串接，共享沙箱檔案系統。
@@ -186,6 +193,7 @@ users/{lineUserId}
   last_interaction_id: string | null
   last_active_at: timestamp
   lock: { task_id: string, lock_until: timestamp } | null
+  pending_action: "retry_write" | "retry_publish" | null
 
 reports/{reportId}
   user_id: string
@@ -215,7 +223,7 @@ gs://line-reports/
 
 - `uniform-bucket-level-access` 啟用
 - `allUsers:objectViewer` 公開讀取
-- 預設 `Cache-Control: no-cache`（深化後立即生效）
+- 每次 Agent 上傳 `index.html` 與 `snapshots/v*.html` 都**明確帶 metadata** `Cache-Control: no-cache, max-age=0`（在 system instruction 中要求使用 `gsutil -h "Cache-Control:no-cache, max-age=0" cp ...`，避免 GCS 物件繼承舊 metadata 或預設 `public, max-age=3600`，導致深化後使用者看到舊版）
 
 ### 5.5 Intent 分類
 
@@ -224,12 +232,15 @@ gs://line-reports/
 | Intent | 觸發條件（任一） |
 |---|---|
 | `new` | 訊息不符其它類別、且無 `current_report_id`；或開頭含「研究 / 幫我查 / 找一下」 |
-| `deepen` | 開頭含「深化 / 補 / 改 / 重寫 / 第 N 章」 |
+| `deepen` | 開頭含「深化 / 補 / 改 / 第 N 章」 |
 | `reset` | 訊息為「重新開始 / 換題目 / 清除」 |
 | `recall` | 訊息為「上次的 / 我之前的研究 / 連結」 |
+| `retry` | 訊息為「再試一次 / 再發佈一次」**且** `users/{userId}.pending_action != null` |
 | `chitchat` | 其餘短句（< 5 字、含問候） |
 
-`reset` 行為：歸檔 `current_report_id` 到使用者報告列表、清空指標、**保留** `environment_id`（沙箱繼續沿用）。
+`reset` 行為：歸檔 `current_report_id` 到使用者報告列表、清空 `current_report_id` 與 `last_interaction_id`、**保留** `environment_id`（沙箱繼續沿用）。
+
+`pending_action` 用於記錄失敗後待重試的動作（例如 `retry_write` / `retry_publish`），由 worker 在 6.3 / 6.6 流程寫入；重試成功或使用者下新題目時清除。
 
 ---
 
@@ -251,7 +262,7 @@ gs://line-reports/
 |---|---|
 | PLAN | Push「規劃失敗，請換個說法重試」；不寫入 Firestore 報告。 |
 | SEARCH_COMPARE | 重試 1 次；仍失敗 → Push 告知並中止；不污染 `current_report_id`。 |
-| WRITE_REPORT | 重試 1 次；仍失敗 → Push「資料已找齊，組稿失敗，回『重寫』可再試」；保留 `sources.json`。 |
+| WRITE_REPORT | 重試 1 次；仍失敗 → 設定 `users/{userId}.pending_action = "retry_write"`、Push「資料已找齊，組稿失敗，回『再試一次』可再試」；保留 `sources.json`。 |
 
 ### 6.4 漸進深化指到不存在章節
 
@@ -263,7 +274,7 @@ gs://line-reports/
 
 ### 6.6 GCS 發佈失敗
 
-Agent 在 WRITE_REPORT 段 `gsutil cp` 後立即 `curl -sI` 驗證 200；若失敗回傳 `{error: "publish_failed"}`。Worker 重試 1 次；仍失敗 → Push「報告寫好但發佈失敗，回『重新發佈』可再試」。
+Agent 在 WRITE_REPORT 段 `gsutil cp` 後立即 `curl -sI` 驗證 200；若失敗回傳 `{error: "publish_failed"}`。Worker 重試 1 次；仍失敗 → 設定 `users/{userId}.pending_action = "retry_publish"`、Push「報告寫好但發佈失敗，回『再發佈一次』可再試」；`report.html` 保留在沙箱。
 
 ### 6.7 同用戶並行任務
 
