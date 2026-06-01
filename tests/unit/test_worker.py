@@ -58,3 +58,92 @@ def test_new_research_happy_path(worker: "ResearchWorker") -> None:
     report = worker._store.get_report(user.current_report_id)
     assert report.version == 1
     assert report.summary == "summary"
+
+
+def test_deepen_updates_same_report(worker: "ResearchWorker") -> None:
+    # Seed: existing report v1
+    r = worker._store.create_report(
+        user_id="U1", topic="x", summary="s1",
+        gcs_url="https://storage.googleapis.com/line-reports/r1/index.html",
+        report_id="r1",
+    )
+    worker._store.set_current_report("U1", "r1")
+
+    worker._agents.interact.return_value = _ok(json.dumps({
+        "report_id": "r1",
+        "summary_500": "s2",
+        "top_citations": [],
+        "new_version": 2,
+    }), "iD")
+
+    job = JobPayload(
+        line_user_id="U1", topic="第 2 章再深一點",
+        mode="deepen", report_id="r1", task_id="t2",
+    )
+    worker.run(job)
+
+    assert worker._agents.interact.call_count == 1
+    # Single WRITE_REPORT call with mode=deepen
+    inst = worker._agents.interact.call_args.kwargs["instruction"]
+    assert "mode: deepen" in inst
+    assert "previous_version: 1" in inst
+    assert "第 2 章再深一點" in inst
+
+    updated = worker._store.get_report("r1")
+    assert updated.version == 2
+    assert updated.summary == "s2"
+    assert len(updated.history) == 1
+
+
+def test_sandbox_expiry_recreates_and_falls_back_to_new(worker: "ResearchWorker") -> None:
+    # Save the current env id so we can prove it changed
+    worker._store.create_report(user_id="U1", topic="t", summary="s",
+                                gcs_url="x", report_id="r1")
+    worker._store.set_current_report("U1", "r1")
+
+    new_env = "env-B"
+    worker._agents.create_environment.return_value = new_env
+
+    # First interact raises EnvironmentNotFoundError (sandbox dead),
+    # then the three new-research calls succeed.
+    worker._agents.interact.side_effect = [
+        EnvironmentNotFoundError("dead"),
+        _ok(json.dumps({"topic": "t", "queries": [], "source_count": 0}), "i1"),
+        _ok(json.dumps({"sources": [], "source_count": 0, "disagreement_count": 0,
+                        "agreements": [], "disagreements": [], "gaps": []}), "i2"),
+        _ok(json.dumps({"report_id": "r-new", "summary_500": "s",
+                        "top_citations": [], "new_version": 1}), "i3"),
+    ]
+
+    job = JobPayload(line_user_id="U1", topic="第 2 章再深",
+                     mode="deepen", report_id="r1", task_id="t3")
+    worker.run(job)
+
+    user = worker._store.get_user("U1")
+    assert user.environment_id == new_env
+    # User was warned
+    push_msgs = [c.kwargs.get("text", "") for c in worker._line.push_text.call_args_list]
+    assert any("過期" in m for m in push_msgs)
+
+
+def test_retry_write_uses_existing_sources(worker: "ResearchWorker") -> None:
+    # Seed pending state: sources.json already in sandbox; we only re-run stage 3
+    worker._store.set_pending_action("U1", "retry_write")
+    # Need a topic; in retry mode worker should fetch the in-progress topic from somewhere.
+    # Simplest: store last attempted topic on the user record (added in this task).
+    worker._store._db.collection("users").document("U1").update({"last_attempt_topic": "x"})
+
+    worker._agents.interact.return_value = _ok(json.dumps({
+        "report_id": "r-new", "summary_500": "s",
+        "top_citations": [], "new_version": 1,
+    }), "iR")
+
+    job = JobPayload(line_user_id="U1", topic="再試一次",
+                     mode="retry_write", report_id=None, task_id="tR")
+    worker.run(job)
+
+    assert worker._agents.interact.call_count == 1
+    inst = worker._agents.interact.call_args.kwargs["instruction"]
+    assert "WRITE_REPORT" in inst
+    user = worker._store.get_user("U1")
+    assert user.pending_action is None

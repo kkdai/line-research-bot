@@ -71,3 +71,10 @@ You will receive metadata in the input:
 ```
 
 Return ONLY the JSON.
+
+### If mode == "republish"
+Skip rewriting. Run only steps 8 and 9 (upload + verify). Return:
+```json
+{"report_id": "<input>", "summary_500": "<reuse last>", "top_citations": [], "new_version": <unchanged>}
+```
+If verify fails, return `{"error": "publish_failed"}`.
