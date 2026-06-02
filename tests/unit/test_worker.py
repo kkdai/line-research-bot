@@ -21,8 +21,8 @@ def worker(firestore_client: firestore.Client) -> ResearchWorker:
     )
 
 
-def _ok(text: str, interaction_id: str = "i") -> AgentResponse:
-    return AgentResponse(interaction_id=interaction_id, environment_id="env-A",
+def _ok(text: str, interaction_id: str = "i", environment_id: str = "env-A") -> AgentResponse:
+    return AgentResponse(interaction_id=interaction_id, environment_id=environment_id,
                          text=text, raw={})
 
 
@@ -108,11 +108,14 @@ def test_sandbox_expiry_recreates_and_falls_back_to_new(worker: "ResearchWorker"
     # then the three new-research calls succeed.
     worker._agents.interact.side_effect = [
         EnvironmentNotFoundError("dead"),
-        _ok(json.dumps({"topic": "t", "queries": [], "source_count": 0}), "i1"),
+        _ok(json.dumps({"topic": "t", "queries": [], "source_count": 0}), "i1",
+            environment_id=new_env),
         _ok(json.dumps({"sources": [], "source_count": 0, "disagreement_count": 0,
-                        "agreements": [], "disagreements": [], "gaps": []}), "i2"),
+                        "agreements": [], "disagreements": [], "gaps": []}), "i2",
+            environment_id=new_env),
         _ok(json.dumps({"report_id": "r-new", "summary_500": "s",
-                        "top_citations": [], "new_version": 1}), "i3"),
+                        "top_citations": [], "new_version": 1}), "i3",
+            environment_id=new_env),
     ]
 
     job = JobPayload(line_user_id="U1", topic="第 2 章再深",

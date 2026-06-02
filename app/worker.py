@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Literal
@@ -12,6 +13,34 @@ from app.state import StateStore
 
 
 Mode = Literal["new", "deepen", "retry_write", "retry_publish"]
+
+
+_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+
+
+def _parse_agent_json(text: str) -> dict:
+    """Best-effort JSON extraction from an Agent's `output_text`.
+
+    The Agent is instructed to return ONLY JSON, but occasionally wraps the
+    payload in ```json ... ``` fences or adds a prose prefix/suffix. This
+    helper tries (1) the raw text, (2) the contents of any fenced block,
+    (3) the substring between the first `{` and the matching last `}`.
+    Raises ValueError if nothing parses.
+    """
+    t = (text or "").strip()
+    candidates: list[str] = [t]
+    fence = _FENCE_RE.search(t)
+    if fence:
+        candidates.append(fence.group(1).strip())
+    if "{" in t and "}" in t:
+        candidates.append(t[t.index("{"): t.rindex("}") + 1])
+    last_err: Exception | None = None
+    for c in candidates:
+        try:
+            return json.loads(c)
+        except json.JSONDecodeError as e:
+            last_err = e
+    raise ValueError(f"agent output is not valid JSON: {last_err}")
 
 
 @dataclass
@@ -84,8 +113,11 @@ class ResearchWorker:
         except AgentsAPIError:
             self._line.push_text(user_id=user_id, text="規劃失敗，請換個說法重試。")
             return
-        plan_json = json.loads(plan_resp.text)
+        plan_json = _parse_agent_json(plan_resp.text)
         self._store.set_last_interaction(user_id, plan_resp.interaction_id)
+        if plan_resp.environment_id:
+            self._store.set_environment(user_id, plan_resp.environment_id)
+            env_id = plan_resp.environment_id
         self._line.push_text(
             user_id=user_id,
             text=build_progress_text("plan_done", source_count=plan_json["source_count"]),
@@ -102,7 +134,7 @@ class ResearchWorker:
         except AgentsAPIError:
             self._line.push_text(user_id=user_id, text="搜尋比對失敗，請稍後再試。")
             return
-        search_json = json.loads(search_resp.text)
+        search_json = _parse_agent_json(search_resp.text)
         self._store.set_last_interaction(user_id, search_resp.interaction_id)
         self._line.push_text(
             user_id=user_id,
@@ -133,7 +165,7 @@ class ResearchWorker:
                 text="資料已找齊，組稿失敗，回『再試一次』可再試。",
             )
             return
-        write_json = json.loads(write_resp.text)
+        write_json = _parse_agent_json(write_resp.text)
         self._store.set_last_interaction(user_id, write_resp.interaction_id)
 
         if write_json.get("error") == "publish_failed":
@@ -213,7 +245,7 @@ class ResearchWorker:
             ),
             previous_interaction_id=user.last_interaction_id,
         )
-        write_json = json.loads(write_resp.text)
+        write_json = _parse_agent_json(write_resp.text)
         self._store.set_last_interaction(user_id, write_resp.interaction_id)
 
         if write_json.get("error") == "chapter_not_found":
@@ -258,7 +290,7 @@ class ResearchWorker:
             ),
             previous_interaction_id=user.last_interaction_id,
         )
-        write_json = json.loads(write_resp.text)
+        write_json = _parse_agent_json(write_resp.text)
         self._store.set_last_interaction(user_id, write_resp.interaction_id)
         self._store.set_pending_action(user_id, None)
 
