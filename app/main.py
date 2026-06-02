@@ -98,8 +98,8 @@ def create_app() -> FastAPI:
             await run_in_threadpool(store.release_lock, job.line_user_id)
         return {"ok": True}
 
-    @app.get("/healthz")
-    async def healthz() -> dict:
+    @app.get("/readyz")
+    async def readyz() -> dict:
         return {"status": "ok"}
 
     return app
