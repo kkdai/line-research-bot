@@ -47,7 +47,7 @@ class StateStore:
     # ---------- users ----------
 
     def get_user(self, line_user_id: str) -> UserRecord | None:
-        snap = self._db.collection("users").document(line_user_id).get()
+        snap = self._db.collection("line_bot_users").document(line_user_id).get()
         if not snap.exists:
             return None
         d = snap.to_dict() or {}
@@ -66,7 +66,7 @@ class StateStore:
         line_user_id: str,
         environment_factory: Callable[[], str],
     ) -> UserRecord:
-        ref = self._db.collection("users").document(line_user_id)
+        ref = self._db.collection("line_bot_users").document(line_user_id)
 
         # NOTE: If the transaction retries due to contention, environment_factory()
         # may be called more than once. This is acceptable for our demo: it only
@@ -101,22 +101,22 @@ class StateStore:
         )
 
     def set_environment(self, line_user_id: str, environment_id: str) -> None:
-        self._db.collection("users").document(line_user_id).update(
+        self._db.collection("line_bot_users").document(line_user_id).update(
             {"environment_id": environment_id, "last_active_at": _now()}
         )
 
     def set_current_report(self, line_user_id: str, report_id: str | None) -> None:
-        self._db.collection("users").document(line_user_id).update(
+        self._db.collection("line_bot_users").document(line_user_id).update(
             {"current_report_id": report_id, "last_active_at": _now()}
         )
 
     def set_last_interaction(self, line_user_id: str, interaction_id: str) -> None:
-        self._db.collection("users").document(line_user_id).update(
+        self._db.collection("line_bot_users").document(line_user_id).update(
             {"last_interaction_id": interaction_id, "last_active_at": _now()}
         )
 
     def set_pending_action(self, line_user_id: str, action: PendingAction) -> None:
-        self._db.collection("users").document(line_user_id).update(
+        self._db.collection("line_bot_users").document(line_user_id).update(
             {"pending_action": action}
         )
 
@@ -130,7 +130,7 @@ class StateStore:
     ) -> None:
         @firestore.transactional
         def _txn(txn: firestore.Transaction) -> None:
-            ref = self._db.collection("users").document(line_user_id)
+            ref = self._db.collection("line_bot_users").document(line_user_id)
             snap = ref.get(transaction=txn)
             data = snap.to_dict() or {}
             lock = data.get("lock")
@@ -152,17 +152,17 @@ class StateStore:
         _txn(self._db.transaction())
 
     def release_lock(self, line_user_id: str) -> None:
-        self._db.collection("users").document(line_user_id).update({"lock": None})
+        self._db.collection("line_bot_users").document(line_user_id).update({"lock": None})
 
     # ---------- last_attempt_topic ----------
 
     def set_last_attempt_topic(self, line_user_id: str, topic: str) -> None:
-        self._db.collection("users").document(line_user_id).update(
+        self._db.collection("line_bot_users").document(line_user_id).update(
             {"last_attempt_topic": topic}
         )
 
     def get_last_attempt_topic(self, line_user_id: str) -> str:
-        snap = self._db.collection("users").document(line_user_id).get()
+        snap = self._db.collection("line_bot_users").document(line_user_id).get()
         return (snap.to_dict() or {}).get("last_attempt_topic", "")
 
     # ---------- reports ----------
@@ -188,7 +188,7 @@ class StateStore:
             "created_at": now,
             "updated_at": now,
         }
-        self._db.collection("reports").document(report_id).set(doc)
+        self._db.collection("line_bot_reports").document(report_id).set(doc)
         return ReportRecord(
             report_id=report_id,
             user_id=user_id,
@@ -202,7 +202,7 @@ class StateStore:
         )
 
     def get_report(self, report_id: str) -> ReportRecord | None:
-        snap = self._db.collection("reports").document(report_id).get()
+        snap = self._db.collection("line_bot_reports").document(report_id).get()
         if not snap.exists:
             return None
         d = snap.to_dict() or {}
@@ -224,7 +224,7 @@ class StateStore:
         new_summary: str,
         snapshot_url: str,
     ) -> ReportRecord:
-        ref = self._db.collection("reports").document(report_id)
+        ref = self._db.collection("line_bot_reports").document(report_id)
 
         @firestore.transactional
         def _txn(txn: firestore.Transaction) -> ReportRecord:

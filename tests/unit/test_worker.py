@@ -131,7 +131,7 @@ def test_retry_write_uses_existing_sources(worker: "ResearchWorker") -> None:
     worker._store.set_pending_action("U1", "retry_write")
     # Need a topic; in retry mode worker should fetch the in-progress topic from somewhere.
     # Simplest: store last attempted topic on the user record (added in this task).
-    worker._store._db.collection("users").document("U1").update({"last_attempt_topic": "x"})
+    worker._store._db.collection("line_bot_users").document("U1").update({"last_attempt_topic": "x"})
 
     worker._agents.interact.return_value = _ok(json.dumps({
         "report_id": "r-new", "summary_500": "s",
