@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from fastapi import APIRouter, Request, HTTPException
 
@@ -7,6 +8,8 @@ from app.intent import Intent, UserState, classify
 from app.line_client import LineClient
 from app.state import StateStore, LockTimeoutError
 from app.tasks_client import TasksDispatcher, ResearchJob
+
+logger = logging.getLogger(__name__)
 
 
 def build_webhook_router(
@@ -27,7 +30,11 @@ def build_webhook_router(
 
         payload = json.loads(body)
         for event in payload.get("events", []):
-            _handle_event(event, store=store, line=line, tasks=tasks, agents=agents)
+            try:
+                _handle_event(event, store=store, line=line, tasks=tasks, agents=agents)
+            except Exception:
+                logger.exception("event handling failed: %s", event.get("type"))
+                # swallow so we still return 200; LINE won't redeliver this batch
         return {"ok": True}
 
     return router
@@ -104,9 +111,17 @@ def _handle_event(
     mode = mode_map[intent]
     report_id = user.current_report_id if intent == Intent.DEEPEN else None
 
-    line.reply_text(reply_token=reply_token, text="📋 已收到題目，開始規劃…")
-
     job = ResearchJob(
         line_user_id=user_id, topic=text, mode=mode, report_id=report_id,
     )
-    tasks.enqueue(job, task_id=task_id)
+    try:
+        tasks.enqueue(job, task_id=task_id)
+    except Exception:
+        # Roll back the lock so the user can retry; surface the error to LINE.
+        store.release_lock(user_id)
+        logger.exception("tasks.enqueue failed")
+        line.reply_text(reply_token=reply_token,
+                        text="排程失敗，請稍後再試。")
+        return
+
+    line.reply_text(reply_token=reply_token, text="📋 已收到題目，開始規劃…")

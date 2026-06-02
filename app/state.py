@@ -154,6 +154,17 @@ class StateStore:
     def release_lock(self, line_user_id: str) -> None:
         self._db.collection("users").document(line_user_id).update({"lock": None})
 
+    # ---------- last_attempt_topic ----------
+
+    def set_last_attempt_topic(self, line_user_id: str, topic: str) -> None:
+        self._db.collection("users").document(line_user_id).update(
+            {"last_attempt_topic": topic}
+        )
+
+    def get_last_attempt_topic(self, line_user_id: str) -> str:
+        snap = self._db.collection("users").document(line_user_id).get()
+        return (snap.to_dict() or {}).get("last_attempt_topic", "")
+
     # ---------- reports ----------
 
     def create_report(

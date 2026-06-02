@@ -43,9 +43,7 @@ class ResearchWorker:
 
         try:
             if job.mode == "new":
-                self._store._db.collection("users").document(user.line_user_id).update(
-                    {"last_attempt_topic": job.topic}
-                )
+                self._store.set_last_attempt_topic(user.line_user_id, job.topic)
                 self._run_new(user.line_user_id, user.environment_id, job.topic)
             elif job.mode == "deepen":
                 self._run_deepen(
@@ -70,7 +68,7 @@ class ResearchWorker:
             )
             # In retry_publish there is no sources.json on a fresh sandbox either;
             # treat as new research using the original topic.
-            topic = job.topic if job.mode == "new" else self._get_last_topic(user.line_user_id)
+            topic = job.topic if job.mode == "new" else self._store.get_last_attempt_topic(user.line_user_id)
             self._run_new(user.line_user_id, new_env, topic)
 
     # ---------------- new research ----------------
@@ -188,12 +186,6 @@ class ResearchWorker:
     def _public_url(self, report_id: str) -> str:
         return f"https://storage.googleapis.com/{self._bucket}/{report_id}/index.html"
 
-    # ---------------- helpers ----------------
-
-    def _get_last_topic(self, user_id: str) -> str:
-        snap = self._store._db.collection("users").document(user_id).get()
-        return (snap.to_dict() or {}).get("last_attempt_topic", "")
-
     # ---------------- deepen ----------------
 
     def _run_deepen(
@@ -206,6 +198,7 @@ class ResearchWorker:
         assert report_id is not None, "deepen requires an existing report_id"
         existing = self._store.get_report(report_id)
         assert existing is not None
+        self._store.set_last_attempt_topic(user_id, existing.topic)
         previous_version = existing.version
 
         user = self._store.get_user(user_id)
@@ -254,7 +247,7 @@ class ResearchWorker:
 
     def _run_retry_write(self, user_id: str, env_id: str) -> None:
         user = self._store.get_user(user_id)
-        topic = self._get_last_topic(user_id)
+        topic = self._store.get_last_attempt_topic(user_id)
         report_id = uuid.uuid4().hex
         write_resp = self._agents.interact(
             environment_id=env_id,

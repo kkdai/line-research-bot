@@ -1,6 +1,7 @@
 import os
 import sys
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 
 import google.auth
 import google.auth.transport.requests
@@ -92,9 +93,9 @@ def create_app() -> FastAPI:
             task_id=data["task_id"],
         )
         try:
-            worker.run(job)
+            await run_in_threadpool(worker.run, job)
         finally:
-            store.release_lock(job.line_user_id)
+            await run_in_threadpool(store.release_lock, job.line_user_id)
         return {"ok": True}
 
     @app.get("/healthz")
