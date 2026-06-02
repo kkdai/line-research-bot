@@ -1,7 +1,8 @@
+import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
-import httpx
+from google import genai
 
 
 class AgentsAPIError(Exception):
@@ -15,20 +16,19 @@ class EnvironmentNotFoundError(AgentsAPIError):
 @dataclass
 class AgentResponse:
     interaction_id: str
-    environment_id: str
+    environment_id: str | None
     text: str
-    raw: dict
+    raw: Any = None
 
 
 class AgentsClient:
-    """Thin REST wrapper for the Managed Agents API (Pre-GA, v1beta1).
+    """Wrapper over google-genai SDK for the Pre-GA Managed Agents API.
 
-    Args:
-        access_token_provider: callable returning a valid OAuth2 access token.
-            In Cloud Run, use google.auth's default credentials and refresh.
+    The SDK requires `enterprise=True`; interactions must be created with
+    `background=True` (synchronous mode is not supported). This wrapper
+    issues the create, then polls `interactions.get` until the status reaches
+    a terminal state.
     """
-
-    BASE = "https://aiplatform.googleapis.com/v1beta1"
 
     def __init__(
         self,
@@ -36,14 +36,21 @@ class AgentsClient:
         project_id: str,
         location: str,
         agent_id: str,
-        access_token_provider: Callable[[], str],
+        access_token_provider: Callable[[], str] | None = None,
         timeout_seconds: float = 240.0,
+        poll_interval_seconds: float = 2.0,
     ) -> None:
+        # access_token_provider kept for backward compatibility with main.py wiring
+        # but unused: the SDK reads ADC directly.
+        del access_token_provider
         self._project = project_id
         self._location = location
         self._agent_id = agent_id
-        self._token_provider = access_token_provider
         self._timeout = timeout_seconds
+        self._poll_interval = poll_interval_seconds
+        self._client = genai.Client(
+            enterprise=True, project=project_id, location=location
+        )
 
     @property
     def agent_resource(self) -> str:
@@ -52,18 +59,14 @@ class AgentsClient:
             f"/agents/{self._agent_id}"
         )
 
-    def _headers(self) -> dict:
-        return {
-            "Authorization": f"Bearer {self._token_provider()}",
-            "Content-Type": "application/json",
-        }
-
     def create_environment(self) -> str:
-        url = f"{self.BASE}/projects/{self._project}/locations/{self._location}/environments"
-        r = httpx.post(url, headers=self._headers(), json={}, timeout=self._timeout)
-        r.raise_for_status()
-        data = r.json()
-        return data["id"]
+        """Returns an empty sentinel; the real environment is created on the
+        first `interact()` call when `environment_id` is empty.
+
+        Kept for backward compatibility with `StateStore.get_or_create_user`
+        which expects an `environment_factory` callable.
+        """
+        return ""
 
     def interact(
         self,
@@ -73,40 +76,51 @@ class AgentsClient:
         previous_interaction_id: str | None,
         agent_resource: str | None = None,
     ) -> AgentResponse:
-        url = f"{self.BASE}/projects/{self._project}/locations/{self._location}/interactions"
-        payload = {
-            "agent": agent_resource or self.agent_resource,
-            "environment": environment_id,
-            "input": [
-                {
-                    "type": "user_input",
-                    "content": [{"type": "text", "text": instruction}],
-                }
-            ],
+        del agent_resource  # SDK takes the agent id directly
+        env_arg: Any = environment_id if environment_id else {"type": "remote"}
+
+        kwargs: dict[str, Any] = {
+            "agent": self._agent_id,
+            "input": instruction,
+            "environment": env_arg,
+            "stream": False,
+            "background": True,
+            "store": True,
         }
         if previous_interaction_id:
-            payload["previous_interaction_id"] = previous_interaction_id
+            kwargs["previous_interaction_id"] = previous_interaction_id
 
-        r = httpx.post(url, headers=self._headers(), json=payload, timeout=self._timeout)
-        if r.status_code == 404:
-            raise EnvironmentNotFoundError(r.text)
-        if r.status_code >= 400:
-            raise AgentsAPIError(f"{r.status_code}: {r.text}")
+        try:
+            created = self._client.interactions.create(**kwargs)
+        except Exception as e:
+            msg = str(e).lower()
+            if "not found" in msg or "404" in msg or "environment" in msg and "invalid" in msg:
+                raise EnvironmentNotFoundError(str(e)) from e
+            raise AgentsAPIError(str(e)) from e
 
-        data = r.json()
-        text = self._extract_text(data)
-        return AgentResponse(
-            interaction_id=data["id"],
-            environment_id=data.get("environment_id", environment_id),
-            text=text,
-            raw=data,
+        deadline = time.monotonic() + self._timeout
+        last_status = created.status
+        while time.monotonic() < deadline:
+            try:
+                polled = self._client.interactions.get(created.id, include_input=False)
+            except Exception as e:
+                msg = str(e).lower()
+                if "not found" in msg or "404" in msg:
+                    raise EnvironmentNotFoundError(str(e)) from e
+                raise AgentsAPIError(str(e)) from e
+
+            last_status = polled.status
+            if polled.status == "completed":
+                return AgentResponse(
+                    interaction_id=polled.id,
+                    environment_id=polled.environment_id,
+                    text=polled.output_text or "",
+                    raw=polled,
+                )
+            if polled.status in ("failed", "errored", "cancelled"):
+                raise AgentsAPIError(f"interaction {polled.status}: {polled.id}")
+            time.sleep(self._poll_interval)
+
+        raise AgentsAPIError(
+            f"interaction timed out after {self._timeout}s (last status: {last_status})"
         )
-
-    @staticmethod
-    def _extract_text(data: dict) -> str:
-        for item in data.get("output", []):
-            if item.get("type") == "agent_response":
-                for part in item.get("content", []):
-                    if part.get("type") == "text":
-                        return part["text"]
-        return ""

@@ -7,9 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e .
-
 COPY app/ ./app/
+RUN pip install --no-cache-dir .
 
 EXPOSE 8080
 
