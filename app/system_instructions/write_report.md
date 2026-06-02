@@ -42,17 +42,17 @@ You will receive metadata in the input:
 7. If mode == "deepen":
    ```bash
    gsutil -h "Cache-Control:no-cache, max-age=0" mv \
-       gs://line-reports/{report_id}/index.html \
-       gs://line-reports/{report_id}/snapshots/v{previous_version}.html
+       gs://research-line/{report_id}/index.html \
+       gs://research-line/{report_id}/snapshots/v{previous_version}.html
    ```
 8. Upload new index.html:
    ```bash
    gsutil -h "Cache-Control:no-cache, max-age=0" cp \
-       /workspace/report.html gs://line-reports/{report_id}/index.html
+       /workspace/report.html gs://research-line/{report_id}/index.html
    ```
 9. Verify it is publicly reachable:
    ```bash
-   curl -sI https://storage.googleapis.com/line-reports/{report_id}/index.html | head -1
+   curl -sI https://storage.googleapis.com/research-line/{report_id}/index.html | head -1
    ```
    If not `HTTP/2 200`, return `{"error": "publish_failed"}`.
 
