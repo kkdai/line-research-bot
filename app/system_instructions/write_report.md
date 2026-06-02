@@ -1,8 +1,8 @@
 # Stage: WRITE_REPORT
 
 You will receive metadata in the input:
-- `report_id`: target GCS path component
-- `mode`: "new" | "deepen"
+- `report_id`: target identifier (echo it back in the output)
+- `mode`: "new" | "deepen" | "republish"
 - `previous_version`: integer, present only when mode is "deepen"
 - `deepen_request`: free-text user instruction, present only when mode is "deepen"
   (e.g. "第 3 章再深一點，加日文來源")
@@ -10,7 +10,7 @@ You will receive metadata in the input:
 ## Your task
 
 ### If mode == "new"
-1. Read `/workspace/sources.json`.
+1. Read `/workspace/sources.json` using `code_execution`.
 2. Write `/workspace/report.md` with this structure (繁體中文):
    - 標題
    - 摘要（500 字）
@@ -30,37 +30,19 @@ You will receive metadata in the input:
    ```
 4. Rewrite `/workspace/report.md` with changes applied; regenerate summary.
 
-### Render and publish (both modes)
-5. `code_execution`: install markdown if missing
-   ```bash
-   pip install --quiet markdown
-   ```
-6. Run a Python snippet to render `report.md` → `report.html` with inline CSS:
-   - Use `markdown.markdown(text, extensions=["fenced_code", "tables", "footnotes"])`.
-   - Wrap output in a complete `<html>` doc with a `<style>` block. Add a top banner:
-     `<div class="banner">v{NEW_VERSION} · 更新於 {timestamp}</div>`.
-7. If mode == "deepen":
-   ```bash
-   gsutil -h "Cache-Control:no-cache, max-age=0" mv \
-       gs://research-line/{report_id}/index.html \
-       gs://research-line/{report_id}/snapshots/v{previous_version}.html
-   ```
-8. Upload new index.html:
-   ```bash
-   gsutil -h "Cache-Control:no-cache, max-age=0" cp \
-       /workspace/report.html gs://research-line/{report_id}/index.html
-   ```
-9. Verify it is publicly reachable:
-   ```bash
-   curl -sI https://storage.googleapis.com/research-line/{report_id}/index.html | head -1
-   ```
-   If not `HTTP/2 200`, return `{"error": "publish_failed"}`.
+### If mode == "republish"
+Just re-read `/workspace/report.md` (do not modify) and return it.
 
-## Output JSON returned in your message
+## Output
+
+After writing/updating `/workspace/report.md`, use `code_execution` to read its
+full contents back, then return a SINGLE JSON object:
+
 ```json
 {
-  "report_id": "<same as input>",
-  "summary_500": "<500-char summary>",
+  "report_id": "<echo back the input report_id>",
+  "report_md": "<the FULL contents of /workspace/report.md as a single string>",
+  "summary_500": "<a 500-character summary suitable for messaging>",
   "top_citations": [
     {"title": "...", "url": "..."},
     {"title": "...", "url": "..."},
@@ -70,11 +52,9 @@ You will receive metadata in the input:
 }
 ```
 
-Return ONLY the JSON.
+**DO NOT** attempt to upload to GCS. **DO NOT** run gsutil. **DO NOT** run curl
+against `storage.googleapis.com`. The host service handles rendering and
+publishing. Your only job is to write the Markdown into the sandbox and echo
+its contents back in the JSON.
 
-### If mode == "republish"
-Skip rewriting. Run only steps 8 and 9 (upload + verify). Return:
-```json
-{"report_id": "<input>", "summary_500": "<reuse last>", "top_citations": [], "new_version": <unchanged>}
-```
-If verify fails, return `{"error": "publish_failed"}`.
+Return ONLY the JSON. No prose, no markdown fences.

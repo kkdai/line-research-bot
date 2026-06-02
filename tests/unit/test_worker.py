@@ -184,12 +184,22 @@ def test_write_report_fails_twice_sets_pending_action(worker: "ResearchWorker") 
     assert any("再試一次" in m for m in push_msgs)
 
 
-def test_write_report_publish_failed_sets_pending_action(worker: "ResearchWorker") -> None:
+def test_write_report_publish_failed_sets_pending_action(
+    worker: "ResearchWorker",
+) -> None:
+    # Publishing is now done by Cloud Run via the publisher dependency, not by
+    # the Agent. Simulate publisher.publish() raising to verify the
+    # retry_publish handover.
+    worker._publisher = MagicMock()
+    worker._publisher.publish.side_effect = RuntimeError("gcs down")
     worker._agents.interact.side_effect = [
         _ok(json.dumps({"topic": "x", "queries": [], "source_count": 0}), "i1"),
         _ok(json.dumps({"sources": [], "source_count": 0, "disagreement_count": 0,
                         "agreements": [], "disagreements": [], "gaps": []}), "i2"),
-        _ok(json.dumps({"error": "publish_failed"}), "i3"),
+        _ok(json.dumps({
+            "report_id": "r1", "report_md": "# x", "summary_500": "s",
+            "top_citations": [], "new_version": 1,
+        }), "i3"),
     ]
     job = JobPayload(line_user_id="U1", topic="t", mode="new",
                      report_id=None, task_id="t1")

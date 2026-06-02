@@ -10,6 +10,7 @@ from google.cloud import firestore
 from app.agents_client import AgentsClient
 from app.config import get_settings
 from app.line_client import LineClient
+from app.publisher import GcsPublisher
 from app.state import StateStore
 from app.tasks_client import TasksDispatcher
 from app.webhook import build_webhook_router
@@ -73,8 +74,10 @@ def create_app() -> FastAPI:
         target_url=_tasks_target_url,
         service_account_email=sa_email,
     )
+    publisher = GcsPublisher(bucket_name=s.gcs_bucket)
     worker = ResearchWorker(
-        store=store, agents=agents, line=line, gcs_bucket=s.gcs_bucket,
+        store=store, agents=agents, line=line,
+        gcs_bucket=s.gcs_bucket, publisher=publisher,
     )
 
     app = FastAPI()

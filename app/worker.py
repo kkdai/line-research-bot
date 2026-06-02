@@ -9,6 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_t
 from app.agents_client import AgentsClient, AgentResponse, EnvironmentNotFoundError, AgentsAPIError
 from app.flex import build_progress_text, build_report_card
 from app.line_client import LineClient
+from app.publisher import GcsPublisher
 from app.state import StateStore
 
 
@@ -60,11 +61,14 @@ class ResearchWorker:
         agents: AgentsClient,
         line: LineClient,
         gcs_bucket: str,
+        publisher: GcsPublisher | None = None,
     ) -> None:
         self._store = store
         self._agents = agents
         self._line = line
         self._bucket = gcs_bucket
+        # Tests pass a MagicMock for publisher; production wires GcsPublisher.
+        self._publisher = publisher
 
     def run(self, job: JobPayload) -> None:
         user = self._store.get_user(job.line_user_id)
@@ -168,22 +172,28 @@ class ResearchWorker:
         write_json = _parse_agent_json(write_resp.text)
         self._store.set_last_interaction(user_id, write_resp.interaction_id)
 
-        if write_json.get("error") == "publish_failed":
-            # Sandbox has report.html but couldn't upload. Seed state so user can retry.
-            gcs_url = self._public_url(report_id)
+        try:
+            gcs_url = self._publish(
+                report_id=report_id,
+                topic=topic,
+                report_md=write_json.get("report_md", ""),
+                version=1,
+            )
+        except Exception:
+            self._store.set_pending_action(user_id, "retry_publish")
             self._store.create_report(
                 user_id=user_id, topic=topic,
-                summary="(尚未發佈成功)", gcs_url=gcs_url, report_id=report_id,
+                summary="(尚未發佈成功)",
+                gcs_url=self._public_url(report_id),
+                report_id=report_id,
             )
             self._store.set_current_report(user_id, report_id)
-            self._store.set_pending_action(user_id, "retry_publish")
             self._line.push_text(
                 user_id=user_id,
                 text="報告寫好但發佈失敗，回『再發佈一次』可再試。",
             )
             return
 
-        gcs_url = self._public_url(report_id)
         report = self._store.create_report(
             user_id=user_id,
             topic=topic,
@@ -217,6 +227,27 @@ class ResearchWorker:
 
     def _public_url(self, report_id: str) -> str:
         return f"https://storage.googleapis.com/{self._bucket}/{report_id}/index.html"
+
+    def _publish(
+        self,
+        *,
+        report_id: str,
+        topic: str,
+        report_md: str,
+        version: int,
+        snapshot_previous: int | None = None,
+    ) -> str:
+        """Render Markdown to HTML and upload to GCS. Returns the public URL.
+        Falls back to a synthesised URL if no publisher is wired (tests)."""
+        if self._publisher is None:
+            return self._public_url(report_id)
+        return self._publisher.publish(
+            report_id=report_id,
+            topic=topic,
+            report_md=report_md or f"# {topic}\n\n(報告內容缺失)",
+            version=version,
+            snapshot_previous=snapshot_previous,
+        )
 
     # ---------------- deepen ----------------
 
@@ -256,6 +287,21 @@ class ResearchWorker:
             )
             return
 
+        new_version = write_json["new_version"]
+        try:
+            self._publish(
+                report_id=report_id,
+                topic=existing.topic,
+                report_md=write_json.get("report_md", ""),
+                version=new_version,
+                snapshot_previous=previous_version,
+            )
+        except Exception:
+            self._line.push_text(
+                user_id=user_id, text="深化完成但發佈失敗，請稍後重試。",
+            )
+            return
+
         snapshot_url = (
             f"https://storage.googleapis.com/{self._bucket}/"
             f"{report_id}/snapshots/v{previous_version}.html"
@@ -292,9 +338,19 @@ class ResearchWorker:
         )
         write_json = _parse_agent_json(write_resp.text)
         self._store.set_last_interaction(user_id, write_resp.interaction_id)
-        self._store.set_pending_action(user_id, None)
 
-        gcs_url = self._public_url(report_id)
+        try:
+            gcs_url = self._publish(
+                report_id=report_id,
+                topic=topic,
+                report_md=write_json.get("report_md", ""),
+                version=1,
+            )
+        except Exception:
+            self._line.push_text(user_id=user_id, text="組稿完成但發佈失敗，請稍後重試。")
+            return
+
+        self._store.set_pending_action(user_id, None)
         self._store.create_report(
             user_id=user_id,
             topic=topic,
@@ -316,8 +372,8 @@ class ResearchWorker:
     # ---------------- retry_publish ----------------
 
     def _run_retry_publish(self, user_id: str, env_id: str) -> None:
-        """Retry only the upload step. The sandbox already has report.html.
-        We instruct the Agent to run only the publish commands and report success."""
+        """Retry only the publish step. Ask the agent to re-read /workspace/report.md
+        and return its content; Cloud Run renders and uploads to GCS."""
         user = self._store.get_user(user_id)
         report = None
         if user.current_report_id:
@@ -333,12 +389,19 @@ class ResearchWorker:
             ),
             previous_interaction_id=user.last_interaction_id,
         )
-        data = json.loads(resp.text)
-        if data.get("error") == "publish_failed":
+        data = _parse_agent_json(resp.text)
+        try:
+            gcs_url = self._publish(
+                report_id=report.report_id,
+                topic=report.topic,
+                report_md=data.get("report_md", ""),
+                version=report.version,
+            )
+        except Exception:
             self._line.push_text(user_id=user_id, text="再次發佈失敗，請稍後重試。")
             return
         self._store.set_pending_action(user_id, None)
         self._line.push_text(
             user_id=user_id,
-            text=f"✅ 已重新發佈：{report.gcs_url}",
+            text=f"✅ 已重新發佈：{gcs_url}",
         )
