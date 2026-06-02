@@ -37,8 +37,8 @@ class AgentsClient:
         location: str,
         agent_id: str,
         access_token_provider: Callable[[], str] | None = None,
-        timeout_seconds: float = 240.0,
-        poll_interval_seconds: float = 2.0,
+        timeout_seconds: float = 600.0,
+        poll_interval_seconds: float = 3.0,
     ) -> None:
         # access_token_provider kept for backward compatibility with main.py wiring
         # but unused: the SDK reads ADC directly.
