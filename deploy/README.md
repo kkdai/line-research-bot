@@ -56,19 +56,32 @@ echo -n "<paste LINE channel access token>" | \
     gcloud secrets create LINE_CHANNEL_ACCESS_TOKEN --data-file=-
 ```
 
-## 5. Bucket + queue + agent
+## 5. Bucket + queue
+
+No Managed Agent needs to be created: the agents are defined in code with
+ADK for Go and call Gemini on Vertex AI directly (`roles/aiplatform.user`).
 
 ```bash
-PROJECT_ID="${PROJECT_ID}" ./create-bucket.sh
+PROJECT_ID="${PROJECT_ID}" BUCKET=<bucket> ./create-bucket.sh
 PROJECT_ID="${PROJECT_ID}" LOCATION="${REGION}" ./create-tasks-queue.sh
-PROJECT_ID="${PROJECT_ID}" ./create-agent.sh
 ```
 
 ## 6. Deploy
 
 ```bash
 PROJECT_ID="${PROJECT_ID}" REGION="${REGION}" SA_EMAIL="${SA_EMAIL}" \
-    ./deploy.sh
+    GCS_BUCKET=<bucket> ./deploy.sh
+```
+
+`--source=.` builds the Go `Dockerfile` with Cloud Build. The script then
+sets `CLOUD_RUN_SERVICE_URL` to the service's own URL; it is used as the
+Cloud Tasks target and as the expected OIDC audience on
+`/tasks/run-research`. The SA also needs `roles/iam.serviceAccountUser` on
+itself so Cloud Tasks can mint OIDC tokens:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
+    --member="serviceAccount:${SA_EMAIL}" --role="roles/iam.serviceAccountUser"
 ```
 
 ## 7. LINE console
