@@ -18,7 +18,7 @@ gcloud run deploy "${SERVICE}" \
     --region="${REGION}" \
     --source=. \
     --service-account="${SA_EMAIL}" \
-    --min-instances=1 \
+    --min-instances=0 \
     --max-instances=4 \
     --memory=2Gi \
     --cpu=1 \

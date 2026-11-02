@@ -154,9 +154,9 @@ gcloud run services logs read line-research-bot \
 gcloud tasks list --queue=research-jobs \
     --location=$REGION --project=$PROJECT_ID
 
-# Save cost when idle (drops cold-start protection)
+# Keep one warm instance (default is 0; Go cold starts are fast)
 gcloud run services update line-research-bot \
-    --region=$REGION --min-instances=0
+    --region=$REGION --min-instances=1
 ```
 
 ---
