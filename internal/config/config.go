@@ -41,7 +41,7 @@ func Load() (*Config, error) {
 		GCPProjectID:           os.Getenv("GCP_PROJECT_ID"),
 		GCPLocation:            getenv("GCP_LOCATION", "global"),
 		AgentID:                getenv("AGENT_ID", "research-planner"),
-		GeminiModel:            getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
+		GeminiModel:            getenv("GEMINI_MODEL", "gemini-3.8-flash"),
 		GCSBucket:              os.Getenv("GCS_BUCKET"),
 		CloudTasksQueue:        os.Getenv("CLOUD_TASKS_QUEUE"),
 		CloudTasksLocation:     os.Getenv("CLOUD_TASKS_LOCATION"),

@@ -50,6 +50,27 @@ type WriteResult struct {
 	AvailableChapters []string        `json:"available_chapters"`
 }
 
+// ErrChapterNotFound is the WriteResult.Error value for a deepen request that
+// names a chapter the report does not have.
+const ErrChapterNotFound = "chapter_not_found"
+
+// ChapterNotFound reports whether the model flagged a missing chapter. Models
+// occasionally mangle the enum value (e.g. repeat it), so match loosely.
+func (w WriteResult) ChapterNotFound() bool {
+	return strings.Contains(w.Error, ErrChapterNotFound)
+}
+
+var headingRE = regexp.MustCompile(`(?m)^##\s+(.+?)\s*$`)
+
+// Chapters lists the level-2 headings of a Markdown report.
+func Chapters(reportMD string) []string {
+	var out []string
+	for _, m := range headingRE.FindAllStringSubmatch(reportMD, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
 // Output wraps a parsed stage result with its raw JSON and the ADK
 // invocation id (stored as last_interaction_id for traceability).
 type Output[T any] struct {

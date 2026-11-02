@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/kkdai/line-research-bot/internal/flex"
@@ -296,15 +297,17 @@ func (w *Worker) runDeepen(ctx context.Context, user *state.User, reportID, requ
 	wr := write.Value
 	_ = w.Store.SetLastInteraction(ctx, userID, write.InvocationID)
 
-	if wr.Error == "chapter_not_found" {
-		chapters := ""
-		for i, c := range wr.AvailableChapters {
-			if i > 0 {
-				chapters += "\n"
-			}
-			chapters += c
+	if wr.ChapterNotFound() {
+		chapters := wr.AvailableChapters
+		if len(chapters) == 0 {
+			chapters = research.Chapters(ws.ReportMD)
 		}
-		w.push(userID, "找不到指定章節。目前報告章節如下：\n"+chapters)
+		w.push(userID, "找不到指定章節。目前報告章節如下：\n"+strings.Join(chapters, "\n"))
+		return nil
+	}
+	if strings.TrimSpace(wr.ReportMD) == "" {
+		slog.Error("deepen returned empty report", "error_field", wr.Error)
+		w.push(userID, "深化失敗，請稍後再試。")
 		return nil
 	}
 

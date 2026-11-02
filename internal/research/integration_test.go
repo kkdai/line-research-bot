@@ -22,7 +22,7 @@ func TestStages(t *testing.T) {
 	}
 	modelName := os.Getenv("GEMINI_MODEL")
 	if modelName == "" {
-		modelName = "gemini-3-flash-preview"
+		modelName = "gemini-3.8-flash"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()

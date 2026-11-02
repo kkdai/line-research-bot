@@ -52,8 +52,9 @@ var writeSchema = obj(map[string]*genai.Schema{
 		"title": str(""),
 		"url":   str(""),
 	}, "title", "url")),
-	"new_version":        integer("1 for new, previous_version+1 for deepen"),
-	"added_sources":      arr(sourceSchema),
-	"error":              str("set to chapter_not_found when the requested chapter does not exist"),
+	"new_version":   integer("1 for new, previous_version+1 for deepen"),
+	"added_sources": arr(sourceSchema),
+	"error": {Type: genai.TypeString, Enum: []string{ErrChapterNotFound},
+		Description: "only set when the requested chapter does not exist"},
 	"available_chapters": arr(str("")),
 }, "report_id", "report_md", "summary_500", "top_citations", "new_version")

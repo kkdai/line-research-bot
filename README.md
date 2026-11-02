@@ -57,16 +57,17 @@ Bot:         [Flex card v2]  same URL, content updated, old version snapshotted
 | Structured JSON output | `OutputSchema` (ADK injects `set_model_response`, so it works alongside built-in tools) |
 | Hand-off between stages | `OutputKey` → session state; instructions use `{plan}`, `{sources}`, `{report_md?}` placeholders |
 | Execution | `runner.Runner` + `session.InMemoryService()` |
-| Model | `gemini.NewModel` on Vertex AI (`GEMINI_MODEL`, default `gemini-3-flash-preview`) |
+| Model | `gemini.NewModel` on Vertex AI (`GEMINI_MODEL`, default `gemini-3.8-flash`) |
 
 **Persistence:** each stage runs in a fresh ADK session seeded from the
 user's Firestore workspace (`line_bot_workspaces/{userId}`), and results are
 written back afterwards. Instances stay stateless, and a deepen request hours
 later still sees the same sources and report.
 
-**Model choice:** `gemini-2.5-flash` rejects controlled generation together
-with `url_context`; `gemini-3-flash-preview` supports search + url_context +
-OutputSchema in one agent.
+**Model choice:** the agents need Google Search + url_context + OutputSchema in
+one request. `gemini-3.8-flash` (default) and `gemini-3-flash-preview`
+support that; `gemini-2.5-flash` rejects controlled generation together with
+`url_context`.
 
 ---
 
@@ -127,7 +128,7 @@ auto-reply: OFF).
 | `GCP_PROJECT_ID` | The GCP project (also used for Vertex AI) |
 | `GCP_LOCATION` | Vertex AI location for Gemini (default: `global`) |
 | `AGENT_ID` | ADK app name / agent name prefix (default: `research-planner`) |
-| `GEMINI_MODEL` | Optional, default `gemini-3-flash-preview` |
+| `GEMINI_MODEL` | Optional, default `gemini-3.8-flash` |
 | `GCS_BUCKET` | Where to upload report HTML |
 | `CLOUD_TASKS_QUEUE` | Queue name for background work |
 | `CLOUD_TASKS_LOCATION` | Queue region |
@@ -163,8 +164,6 @@ gcloud run services update line-research-bot \
 
 ## Known limitations
 
-- **Preview model**: the default model is a preview Gemini model; override
-  with `GEMINI_MODEL` once a GA model supports the same tool combination.
 - **Single rolling research per user**: by design — one active report per
   LINE user; a per-user lock prevents concurrent jobs.
 - **No LINE Login / LIFF**: report URLs are public (with a hard-to-guess

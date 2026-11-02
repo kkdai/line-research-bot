@@ -288,3 +288,25 @@ func TestUnknownUser(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestDeepenChapterNotFoundMangledFallsBackToHeadings(t *testing.T) {
+	w, s, a, l, p := setup()
+	seedReport(s)
+	s.workspaces["U1"].ReportMD = "# T\n\n## 第一章 A\n\ntext\n\n## 第二章 B\n"
+	a.write = research.WriteResult{Error: "chapter_not_found_chapter_not_found"}
+	_ = w.Run(context.Background(), tasks.Job{LineUserID: "U1", Topic: "第 9 章", Mode: "deepen", ReportID: "rid"})
+	if len(p.calls) != 0 || l.texts[0] != "找不到指定章節。目前報告章節如下：\n第一章 A\n第二章 B" {
+		t.Fatalf("texts=%v publish=%v", l.texts, p.calls)
+	}
+}
+
+func TestDeepenEmptyReportNotPublished(t *testing.T) {
+	w, s, a, l, p := setup()
+	seedReport(s)
+	a.write = research.WriteResult{Error: "something_else"}
+	a.write.ReportMD = "   "
+	_ = w.Run(context.Background(), tasks.Job{LineUserID: "U1", Topic: "第 1 章", Mode: "deepen", ReportID: "rid"})
+	if len(p.calls) != 0 || l.texts[0] != "深化失敗，請稍後再試。" {
+		t.Fatalf("texts=%v publish=%v", l.texts, p.calls)
+	}
+}

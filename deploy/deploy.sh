@@ -7,7 +7,7 @@ SERVICE="${SERVICE:-line-research-bot}"
 SA_EMAIL="${SA_EMAIL:?set SA_EMAIL}"  # e.g. line-bot-sa@PROJECT.iam.gserviceaccount.com
 GCS_BUCKET="${GCS_BUCKET:-line-reports}"
 AGENT_ID="${AGENT_ID:-research-planner}"
-GEMINI_MODEL="${GEMINI_MODEL:-gemini-3-flash-preview}"
+GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.8-flash}"
 
 # Required Secret Manager secrets must exist already:
 #   - LINE_CHANNEL_SECRET
