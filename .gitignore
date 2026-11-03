@@ -14,3 +14,5 @@ htmlcov/
 firebase-debug.log
 firestore-debug.log
 .firebaserc
+bin/
+.env

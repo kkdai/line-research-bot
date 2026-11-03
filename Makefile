@@ -1,21 +1,21 @@
-.PHONY: install test test-integration lint run emulator
+.PHONY: build test test-integration lint run docker
 
-install:
-	pip install -e ".[dev]"
-
-emulator:
-	firebase emulators:start --only firestore
+build:
+	go build -o bin/server ./cmd/server
 
 test:
-	USE_FIRESTORE_EMULATOR=true FIRESTORE_EMULATOR_HOST=localhost:8081 \
-		pytest tests/unit -v
+	go test ./...
 
+# Real Vertex AI calls; needs ADC and GCP_PROJECT_ID.
 test-integration:
-	pytest tests/integration -v -s
+	go test -tags integration -v -timeout 25m ./internal/research
 
 lint:
-	ruff check app tests
-	ruff format --check app tests
+	go vet ./...
+	test -z "$$(gofmt -l .)"
 
 run:
-	uvicorn app.main:app --reload --port 8080
+	set -a; [ -f .env ] && . ./.env; set +a; go run ./cmd/server
+
+docker:
+	docker build -t line-research-bot .
